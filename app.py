@@ -6,13 +6,22 @@ from dotenv import load_dotenv
 from telethon.sync import TelegramClient
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon.tl.types import InputPeerEmpty
+from telethon.sessions import StringSession
 
 # Load environment variables
 load_dotenv()
 
-# Get API credentials from environment variables
-API_ID = os.getenv('TELEGRAM_API_ID')
-API_HASH = os.getenv('TELEGRAM_API_HASH')
+# Get API credentials from environment variables or Streamlit secrets
+try:
+    # Try to get from Streamlit secrets first (for deployed apps)
+    API_ID = st.secrets["TELEGRAM_API_ID"]
+    API_HASH = st.secrets["TELEGRAM_API_HASH"]
+    SESSION_STRING = st.secrets.get("TELEGRAM_SESSION_STRING", "")
+except (KeyError, FileNotFoundError):
+    # Fall back to environment variables (for local development)
+    API_ID = os.getenv('TELEGRAM_API_ID')
+    API_HASH = os.getenv('TELEGRAM_API_HASH')
+    SESSION_STRING = os.getenv('TELEGRAM_SESSION_STRING', "")
 
 # Streamlit UI
 st.title("🔍 Telegram Group Keyword Scraper")
@@ -44,18 +53,38 @@ if st.button("🚀 Start Scraping", type="primary"):
         # Define async scraping logic
         async def scrape_keywords():
             try:
-                # Create client using existing session
-                client = TelegramClient(
-                    'session', 
-                    int(API_ID), 
-                    API_HASH,
-                    connection_retries=5,
-                    retry_delay=1
-                )
+                # Create client using session from secrets or generate new one
+                if SESSION_STRING:
+                    # Use existing session string from secrets
+                    client = TelegramClient(
+                        StringSession(SESSION_STRING), 
+                        int(API_ID), 
+                        API_HASH,
+                        connection_retries=5,
+                        retry_delay=1
+                    )
+                else:
+                    # Create new session (for first-time setup)
+                    client = TelegramClient(
+                        StringSession(), 
+                        int(API_ID), 
+                        API_HASH,
+                        connection_retries=5,
+                        retry_delay=1
+                    )
                 
                 with st.spinner("🔌 Connecting to Telegram..."):
                     await client.start()
                 st.success("✅ Connected to Telegram!")
+                
+                # If this is a new session, display the session string for saving
+                if not SESSION_STRING:
+                    session_string = client.session.save()
+                    st.warning("🔐 **First-time setup detected!**")
+                    st.info("📋 **Save this session string to your Streamlit secrets:**")
+                    st.code(session_string, language="text")
+                    st.info("💡 Add `TELEGRAM_SESSION_STRING = \"your_session_string_here\"` to your secrets")
+                    st.info("🔄 After adding to secrets, restart the app")
                 
                 with st.spinner("🔍 Getting group information..."):
                     group = await client.get_entity(group_link)
