@@ -2,6 +2,8 @@ import streamlit as st
 import asyncio
 import pandas as pd
 import os
+import unicodedata
+import re
 from dotenv import load_dotenv
 from telethon.sync import TelegramClient
 from telethon.tl.functions.messages import GetDialogsRequest
@@ -10,6 +12,24 @@ from telethon.sessions import StringSession
 
 # Load environment variables
 load_dotenv()
+
+# Function to normalize text for better Hebrew and Unicode search
+def normalize_text(text):
+    """Normalize text for better search matching, especially for Hebrew"""
+    if not text:
+        return ""
+    
+    # Remove RTL/LTR marks and other invisible characters
+    text = re.sub(r'[\u200e\u200f\u202a-\u202e]', '', text)
+    
+    # Normalize Unicode (NFD decomposition then NFC composition)
+    text = unicodedata.normalize('NFD', text)
+    text = unicodedata.normalize('NFC', text)
+    
+    # Remove extra whitespace
+    text = ' '.join(text.split())
+    
+    return text
 
 # Get API credentials from environment variables or Streamlit secrets
 try:
@@ -52,7 +72,7 @@ with st.expander("⚙️ Advanced Options"):
     col1, col2 = st.columns(2)
     with col1:
         message_limit = st.number_input("📊 Maximum messages to scan", 
-                                        min_value=100, max_value=50000, value=10000, step=500,
+                                        min_value=100, max_value=5000000000, value=10000, step=500,
                                         help="Limits processing time and prevents rate limiting")
         case_sensitive = st.checkbox("🔤 Case sensitive search")
     with col2:
@@ -67,6 +87,17 @@ if st.button("🚀 Start Scraping", type="primary"):
     else:
         keywords = [k.strip() for k in keywords_input.split(",") if k.strip()]
         exclude_keywords = [k.strip() for k in exclude_keywords_input.split(",") if k.strip()] if exclude_keywords_input else []
+        
+        # Debug info for Hebrew keywords
+        has_hebrew_keywords = any('\u0590' <= char <= '\u05FF' for keyword in keywords for char in keyword)
+        if has_hebrew_keywords:
+            with st.expander("🔍 Hebrew Search Debug Info"):
+                st.write("**Original Keywords:**", keywords)
+                normalized_kw = [normalize_text(k) for k in keywords]
+                st.write("**Normalized Keywords:**", normalized_kw)
+                if not case_sensitive:
+                    st.write("**Lowercase Keywords:**", [k.lower() for k in normalized_kw])
+                st.info("💡 If search fails, try copying keywords directly from Telegram messages")
         
         # Define async scraping logic
         async def scrape_keywords():
@@ -121,74 +152,108 @@ if st.button("🚀 Start Scraping", type="primary"):
                 message_count = 0
                 matches_found = 0
                 
-                async for msg in client.iter_messages(group, limit=message_limit):
-                    message_count += 1
-                    
-                    # Update progress every 50 messages
-                    if message_count % 50 == 0:
-                        progress = min(message_count / message_limit, 1.0)
-                        progress_bar.progress(progress)
-                        status_text.text(f"📥 Scanned: {message_count:,} messages | Found: {matches_found} matches")
-                    
-                    if msg.text and msg.sender:
-                        # Check for keyword matches
-                        text_to_search = msg.text if case_sensitive else msg.text.lower()
-                        keywords_to_check = keywords if case_sensitive else [k.lower() for k in keywords]
-                        exclude_to_check = exclude_keywords if case_sensitive else [k.lower() for k in exclude_keywords]
+                # Add Hebrew search info
+                has_hebrew = any('\u0590' <= char <= '\u05FF' for keyword in keywords for char in keyword)
+                if has_hebrew:
+                    st.info("🔤 Hebrew text detected - Using enhanced Unicode search")
+                
+                try:
+                    async for msg in client.iter_messages(group, limit=message_limit):
+                        message_count += 1
                         
-                        # Check if text contains include keywords
-                        include_match = any(word in text_to_search for word in keywords_to_check)
+                        # Update progress every 50 messages
+                        if message_count % 50 == 0:
+                            progress = min(message_count / message_limit, 1.0)
+                            progress_bar.progress(progress)
+                            status_text.text(f"📥 Scanned: {message_count:,} messages | Found: {matches_found} matches")
                         
-                        # Check if text contains exclude keywords
-                        exclude_match = any(word in text_to_search for word in exclude_to_check) if exclude_to_check else False
+                        # Add periodic delay to prevent rate limiting
+                        if message_count % 100 == 0:
+                            await asyncio.sleep(0.1)  # Small delay every 100 messages
                         
-                        if include_match and not exclude_match:
-                            matches_found += 1
-                            username = msg.sender.username if msg.sender.username else f"ID_{msg.sender.id}"
-                            user_id = msg.sender.id
+                        if msg.text and msg.sender:
+                            # Normalize message text for better Hebrew search
+                            normalized_msg_text = normalize_text(msg.text)
                             
-                            # Count messages per user
-                            user_message_count[user_id] = user_message_count.get(user_id, 0) + 1
+                            # Check for keyword matches with normalization
+                            text_to_search = normalized_msg_text if case_sensitive else normalized_msg_text.lower()
                             
-                            # Find which keyword matched
-                            matched_keyword = next((
-                                orig_kw for orig_kw, check_kw in zip(keywords, keywords_to_check) 
-                                if check_kw in text_to_search
-                            ), keywords[0])
+                            # Normalize keywords for comparison
+                            normalized_keywords = [normalize_text(k) for k in keywords]
+                            keywords_to_check = normalized_keywords if case_sensitive else [k.lower() for k in normalized_keywords]
                             
-                            # Create message link
-                            msg_link = (
-                                f"https://t.me/c/{str(group.id)[4:]}/{msg.id}"
-                                if str(group.id).startswith("-100")
-                                else f"{group_link}/{msg.id}"
-                            )
+                            normalized_exclude = [normalize_text(k) for k in exclude_keywords] if exclude_keywords else []
+                            exclude_to_check = normalized_exclude if case_sensitive else [k.lower() for k in normalized_exclude]
                             
-                            # Get message date
-                            msg_date = msg.date.strftime("%Y-%m-%d %H:%M:%S") if msg.date else "N/A"
+                            # Check if text contains include keywords
+                            include_match = any(word in text_to_search for word in keywords_to_check)
                             
-                            message_data = [
-                                f"@{username}", 
-                                matched_keyword, 
-                                group.title, 
-                                msg_link, 
-                                msg_date,
-                                msg.text[:100] + "..." if len(msg.text) > 100 else msg.text,
-                                0  # Placeholder for count - will be updated later
-                            ]
+                            # Check if text contains exclude keywords
+                            exclude_match = any(word in text_to_search for word in exclude_to_check) if exclude_to_check else False
                             
-                            # Store messages per user
-                            if user_id not in user_messages:
-                                user_messages[user_id] = []
-                            user_messages[user_id].append(message_data)
-                            
-                            # Track latest message per user
-                            if user_id not in user_latest_message or msg.date > user_latest_message[user_id]['date']:
-                                user_latest_message[user_id] = {
-                                    'data': message_data,
-                                    'date': msg.date,
-                                    'user_id': user_id
-                                }
-
+                            if include_match and not exclude_match:
+                                matches_found += 1
+                                username = msg.sender.username if msg.sender.username else f"ID_{msg.sender.id}"
+                                user_id = msg.sender.id
+                                
+                                # Count messages per user
+                                user_message_count[user_id] = user_message_count.get(user_id, 0) + 1
+                                
+                                # Find which keyword matched (use original keyword for display)
+                                matched_keyword = None
+                                for orig_kw, norm_kw in zip(keywords, keywords_to_check):
+                                    if norm_kw in text_to_search:
+                                        matched_keyword = orig_kw
+                                        break
+                                if not matched_keyword:
+                                    matched_keyword = keywords[0]
+                                
+                                # Create message link
+                                msg_link = (
+                                    f"https://t.me/c/{str(group.id)[4:]}/{msg.id}"
+                                    if str(group.id).startswith("-100")
+                                    else f"{group_link}/{msg.id}"
+                                )
+                                
+                                # Get message date
+                                msg_date = msg.date.strftime("%Y-%m-%d %H:%M:%S") if msg.date else "N/A"
+                                
+                                # Clean message text for better CSV compatibility
+                                clean_text = msg.text.replace('\n', ' ').replace('\r', ' ')
+                                clean_text = ''.join(char for char in clean_text if ord(char) < 65536)  # Remove problematic Unicode
+                                preview_text = clean_text[:100] + "..." if len(clean_text) > 100 else clean_text
+                                
+                                message_data = [
+                                    f"@{username}", 
+                                    matched_keyword, 
+                                    group.title, 
+                                    msg_link, 
+                                    msg_date,
+                                    preview_text,
+                                    0  # Placeholder for count - will be updated later
+                                ]
+                                
+                                # Store messages per user
+                                if user_id not in user_messages:
+                                    user_messages[user_id] = []
+                                user_messages[user_id].append(message_data)
+                                
+                                # Track latest message per user
+                                if user_id not in user_latest_message or msg.date > user_latest_message[user_id]['date']:
+                                    user_latest_message[user_id] = {
+                                        'data': message_data,
+                                        'date': msg.date,
+                                        'user_id': user_id
+                                    }
+                
+                except Exception as scan_error:
+                    st.warning(f"⚠️ Scan stopped at {message_count:,} messages: {str(scan_error)}")
+                    st.info("💡 This might be due to:")
+                    st.info("• Rate limiting by Telegram")
+                    st.info("• Limited access to older messages")
+                    st.info("• Group permission restrictions")
+                    st.info("• Network connectivity issues")
+                
                 await client.disconnect()
                 progress_bar.progress(1.0)
                 status_text.text(f"✅ Scan complete! {message_count:,} messages scanned")
@@ -335,4 +400,8 @@ st.markdown("• Use public group links or invite links")
 st.markdown("• Separate multiple keywords with commas")
 st.markdown("• Higher message limits take longer to process")
 st.markdown("• Results are exported to Excel format")
+
+
+
+
 
