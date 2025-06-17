@@ -88,81 +88,6 @@ if st.button("🚀 Start Scraping", type="primary"):
         keywords = [k.strip() for k in keywords_input.split(",") if k.strip()]
         exclude_keywords = [k.strip() for k in exclude_keywords_input.split(",") if k.strip()] if exclude_keywords_input else []
         
-        # Debug info for Hebrew keywords
-        has_hebrew_keywords = any('\u0590' <= char <= '\u05FF' for keyword in keywords for char in keyword)
-        if has_hebrew_keywords:
-            with st.expander("🔍 Hebrew Search Debug Info"):
-                st.write("**Original Keywords:**", keywords)
-                normalized_kw = [normalize_text(k) for k in keywords]
-                st.write("**Normalized Keywords:**", normalized_kw)
-                if not case_sensitive:
-                    st.write("**Lowercase Keywords:**", [k.lower() for k in normalized_kw])
-                st.info("💡 If search fails, try copying keywords directly from Telegram messages")
-                
-                # Unicode analysis
-                for i, keyword in enumerate(keywords):
-                    st.write(f"**Keyword {i+1} Unicode Analysis:**")
-                    st.code(f"Original: {repr(keyword)}")
-                    st.code(f"Normalized: {repr(normalized_kw[i])}")
-                    
-                # Keyword tester
-                st.subheader("🧪 Test Different Sources")
-                col1, col2 = st.columns(2)
-                with col1:
-                    test_word1 = st.text_input("Paste from Google Translate:", key="test1")
-                with col2:
-                    test_word2 = st.text_input("Paste from Telegram:", key="test2")
-                
-                if test_word1 and test_word2:
-                    norm1 = normalize_text(test_word1)
-                    norm2 = normalize_text(test_word2)
-                    
-                    if test_word1 == test_word2:
-                        st.success("✅ Words look identical")
-                    else:
-                        st.warning("⚠️ Words look different")
-                    
-                    if norm1 == norm2:
-                        st.success("✅ Words match after normalization")
-                    else:
-                        st.error("❌ Words still different after normalization")
-                        st.code(f"Google: {repr(norm1)}")
-                        st.code(f"Telegram: {repr(norm2)}")
-                        
-                    st.info("**Recommendation**: Use the Telegram version for searching")
-                
-                # Unicode analysis
-                for i, keyword in enumerate(keywords):
-                    st.write(f"**Keyword {i+1} Unicode Analysis:**")
-                    st.code(f"Original: {repr(keyword)}")
-                    st.code(f"Normalized: {repr(normalized_kw[i])}")
-                    
-                # Keyword tester
-                st.subheader("🧪 Test Different Sources")
-                col1, col2 = st.columns(2)
-                with col1:
-                    test_word1 = st.text_input("Paste from Google Translate:", key="test1")
-                with col2:
-                    test_word2 = st.text_input("Paste from Telegram:", key="test2")
-                
-                if test_word1 and test_word2:
-                    norm1 = normalize_text(test_word1)
-                    norm2 = normalize_text(test_word2)
-                    
-                    if test_word1 == test_word2:
-                        st.success("✅ Words look identical")
-                    else:
-                        st.warning("⚠️ Words look different")
-                    
-                    if norm1 == norm2:
-                        st.success("✅ Words match after normalization")
-                    else:
-                        st.error("❌ Words still different after normalization")
-                        st.code(f"Google: {repr(norm1)}")
-                        st.code(f"Telegram: {repr(norm2)}")
-                        
-                    st.info("**Recommendation**: Use the Telegram version for searching")
-        
         # Define async scraping logic
         async def scrape_keywords():
             try:
@@ -216,9 +141,6 @@ if st.button("🚀 Start Scraping", type="primary"):
                 message_count = 0
                 matches_found = 0
                 
-                # Message type tracking for debugging
-                message_types = {"text": 0, "media": 0, "service": 0, "other": 0}
-                
                 # Add Hebrew search info
                 has_hebrew = any('\u0590' <= char <= '\u05FF' for keyword in keywords for char in keyword)
                 if has_hebrew:
@@ -227,17 +149,6 @@ if st.button("🚀 Start Scraping", type="primary"):
                 try:
                     async for msg in client.iter_messages(group, limit=message_limit):
                         message_count += 1
-                        
-                        # Track message types for debugging
-                        if msg.text:
-                            if msg.media:
-                                message_types["media"] += 1
-                            else:
-                                message_types["text"] += 1
-                        elif hasattr(msg, 'action') and msg.action:
-                            message_types["service"] += 1
-                        else:
-                            message_types["other"] += 1
                         
                         # Update progress every 50 messages
                         if message_count % 50 == 0:
@@ -335,14 +246,6 @@ if st.button("🚀 Start Scraping", type="primary"):
                 await client.disconnect()
                 progress_bar.progress(1.0)
                 status_text.text(f"✅ Scan complete! {message_count:,} messages scanned")
-                
-                # Display message type breakdown
-                with st.expander("📊 Message Type Breakdown"):
-                    st.write("**Messages scanned by type:**")
-                    for msg_type, count in message_types.items():
-                        if count > 0:
-                            st.write(f"• **{msg_type.title()}**: {count:,}")
-                    st.info("💡 Scraper only searches text content. Media captions, service messages, and other types may not contain your keywords.")
                 
                 # Prepare final data with correct counts
                 if allow_duplicates:
@@ -485,17 +388,6 @@ st.markdown("💡 **Tips:**")
 st.markdown("• Use public group links or invite links")
 st.markdown("• Separate multiple keywords with commas")
 st.markdown("• Higher message limits take longer to process")
-st.markdown("• Results are exported to Excel format")
-
-st.markdown("🔤 **Hebrew Search Tips:**")
-st.markdown("• Copy keywords directly from Telegram messages for best results")
-st.markdown("• Try both with and without case sensitive search")
-st.markdown("• Check the Hebrew Search Debug Info if available")
-st.markdown("• Some Hebrew characters may have different Unicode representations")
-
-st.markdown("📊 **Message Scanning Info:**")
-st.markdown("• API may have access limitations to older messages")
-st.markdown("• Large scans may be interrupted by rate limiting")
-st.markdown("• Group permissions can affect message accessibility")
+st.markdown("• For Hebrew text: Copy keywords directly from Telegram messages")
 st.markdown("• If scan stops early, try smaller message limits (5K-10K)")
 
