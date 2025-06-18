@@ -4,7 +4,7 @@ import pandas as pd
 import os
 import unicodedata
 import re
-from io import BytesIO
+import io
 from dotenv import load_dotenv
 from telethon.sync import TelegramClient
 from telethon.tl.functions.messages import GetDialogsRequest
@@ -73,7 +73,7 @@ with st.expander("⚙️ Advanced Options"):
     col1, col2 = st.columns(2)
     with col1:
         message_limit = st.number_input("📊 Maximum messages to scan", 
-                                        min_value=100, max_value=500000, value=10000, step=500,
+                                        min_value=100, max_value=50000, value=10000, step=500,
                                         help="Limits processing time and prevents rate limiting")
         case_sensitive = st.checkbox("🔤 Case sensitive search")
     with col2:
@@ -125,8 +125,7 @@ if st.button("🚀 Start Scraping", type="primary"):
                 message_count = 0
                 matches_found = 0
                 
-                has_hebrew = any('\u0590' <= char <= '\u05FF' for keyword in keywords for char in keyword)
-                if has_hebrew:
+                if any('\u0590' <= char <= '\u05FF' for keyword in keywords for char in keyword):
                     st.info("🔤 Hebrew text detected - Using enhanced Unicode search")
                 
                 try:
@@ -147,7 +146,7 @@ if st.button("🚀 Start Scraping", type="primary"):
                             
                             normalized_keywords = [normalize_text(k) for k in keywords]
                             keywords_to_check = normalized_keywords if case_sensitive else [k.lower() for k in normalized_keywords]
-                            
+                        
                             normalized_exclude = [normalize_text(k) for k in exclude_keywords] if exclude_keywords else []
                             exclude_to_check = normalized_exclude if case_sensitive else [k.lower() for k in normalized_exclude]
                             
@@ -160,12 +159,12 @@ if st.button("🚀 Start Scraping", type="primary"):
                                 user_id = msg.sender.id
                                 
                                 user_message_count[user_id] = user_message_count.get(user_id, 0) + 1
-                                
-                                matched_keyword = next((orig_kw for orig_kw, check_kw in zip(keywords, keywords_to_check) if check_kw in text_to_search), keywords[0])
-                                
+                            
+                                matched_keyword = next((orig_kw for orig_kw, norm_kw in zip(keywords, keywords_to_check) if norm_kw in text_to_search), keywords[0])
+                            
                                 msg_link = f"https://t.me/c/{str(group.id)[4:]}/{msg.id}" if str(group.id).startswith("-100") else f"{group_link}/{msg.id}"
                                 msg_date = msg.date.strftime("%Y-%m-%d %H:%M:%S") if msg.date else "N/A"
-                                
+                            
                                 clean_text = msg.text.replace('\n', ' ').replace('\r', ' ')
                                 clean_text = ''.join(char for char in clean_text if ord(char) < 65536)
                                 preview_text = clean_text[:100] + "..." if len(clean_text) > 100 else clean_text
@@ -181,44 +180,44 @@ if st.button("🚀 Start Scraping", type="primary"):
                 
                 except Exception as scan_error:
                     st.warning(f"⚠️ Scan stopped at {message_count:,} messages: {str(scan_error)}")
-                    st.info("💡 This might be due to rate limiting, limited message history access, or group permissions.")
+                    st.info("💡 This might be due to rate limiting, limited message access, or group permissions.")
 
                 await client.disconnect()
                 progress_bar.progress(1.0)
                 status_text.text(f"✅ Scan complete! {message_count:,} messages scanned")
                 
-                data = []
+                final_data = []
                 if allow_duplicates:
                     for user_id, messages in user_messages.items():
                         total_count = user_message_count.get(user_id, 0)
                         for msg_data in messages:
                             msg_data[6] = total_count
-                            data.append(msg_data)
+                            final_data.append(msg_data)
                     columns = ["Username", "Matched Keyword", "Group Name", "Message Link", "Date", "Message Preview"]
-                    if data:
-                        data = [row[:-1] for row in data]
+                    final_data = [row[:-1] for row in final_data]
                 else:
                     for user_id, msg_info in user_latest_message.items():
                         msg_data = msg_info['data'].copy()
                         msg_data[6] = user_message_count.get(user_id, 0)
-                        data.append(msg_data)
+                        final_data.append(msg_data)
                     columns = ["Username", "Matched Keyword", "Group Name", "Message Link", "Date", "Message Preview", "Total Messages"]
                 
-                if data:
-                    df = pd.DataFrame(data, columns=columns)
+                if final_data:
+                    df = pd.DataFrame(final_data, columns=columns)
                     
-                    st.success(f"🎉 **Scraping Complete!** Found **{len(data)}** matching messages")
+                    st.success(f"🎉 **Scraping Complete!** Found **{len(df)}** matching messages")
                     
                     if not allow_duplicates:
-                        st.info(f"📊 **Duplicate filtering applied**: {len(df)} unique users shown (latest message only)")
+                        st.info(f"📊 **Duplicate filtering applied**: {len(df)} unique users (latest message only)")
                     
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("📊 Total Messages", f"{message_count:,}")
+                        st.metric("📊 Total Messages Scanned", f"{message_count:,}")
                     with col2:
-                        st.metric("🎯 Matches Found", len(df))
+                        st.metric("🎯 Matches Found", f"{len(df):,}")
                     with col3:
-                        st.metric("📈 Match Rate", f"{(len(df)/message_count)*100:.2f}%" if message_count > 0 else "0%")
+                        match_rate = (len(df) / message_count * 100) if message_count > 0 else 0
+                        st.metric("📈 Match Rate", f"{match_rate:.2f}%")
                     
                     st.subheader("📋 Results")
                     display_df = df.copy()
@@ -228,7 +227,7 @@ if st.button("🚀 Start Scraping", type="primary"):
                         "Message Link": st.column_config.LinkColumn("Message Link", display_text="View Message"),
                         "Group Name": st.column_config.TextColumn("Group Name"),
                         "Matched Keyword": st.column_config.TextColumn("Keyword"),
-                        "Date": st.column_config.DatetimeColumn("Date", format="YYYY-MM-DD HH:mm:ss"),
+                        "Date": st.column_config.DatetimeColumn("Date"),
                         "Message Preview": st.column_config.TextColumn("Preview", width="large")
                     }
                     if not allow_duplicates:
@@ -236,35 +235,43 @@ if st.button("🚀 Start Scraping", type="primary"):
                     
                     st.dataframe(display_df, use_container_width=True, height=400, column_config=column_config)
                     
-                    st.info("💡 Click on the 'Message Link' column to open messages in Telegram.")
+                    st.info("💡 Click on the 'View Message' links to open messages in Telegram.")
                     
                     st.subheader("📥 Download Results")
                     
                     if download_format == "Excel (.xlsx)":
-                        excel_df = df.copy()
-                        excel_df['Username'] = excel_df['Username'].apply(lambda x: f'=HYPERLINK("https://t.me/{x[1:]}", "{x}")' if x.startswith('@') and "ID_" not in x else x)
-                        excel_df['Message Link'] = excel_df['Message Link'].apply(lambda url: f'=HYPERLINK("{url}", "View Message")')
-                        
-                        output = BytesIO()
+                        excel_filename = f"telegram_scrape_{group.title.replace(' ', '_')}.xlsx"
+                        output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                            excel_df.to_excel(writer, index=False, sheet_name='Results')
-                        excel_data = output.getvalue()
+                            df.to_excel(writer, index=False, sheet_name='Results')
+                            workbook = writer.book
+                            worksheet = writer.sheets['Results']
+                            url_format = workbook.add_format({'font_color': 'blue', 'underline': 1})
+                            try:
+                                username_col_idx = df.columns.get_loc('Username')
+                                msg_link_col_idx = df.columns.get_loc('Message Link')
+                            except KeyError:
+                                username_col_idx, msg_link_col_idx = -1, -1
 
-                        st.download_button("📥 Download Excel File", excel_data, f"telegram_scrape_{group.title.replace(' ', '_')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
-                    else:
-                        csv_data = df.to_csv(index=False, encoding='utf-8-sig')
-                        st.download_button("📥 Download CSV File", csv_data, f"telegram_scrape_{group.title.replace(' ', '_')}.csv", "text/csv; charset=utf-8", type="primary")
+                            for row_num, row_data in df.iterrows():
+                                if username_col_idx != -1 and row_data['Username'].startswith('@') and not row_data['Username'].startswith('@ID_'):
+                                    user_url = f"https://t.me/{row_data['Username'][1:]}"
+                                    worksheet.write_url(row_num + 1, username_col_idx, user_url, url_format, row_data['Username'])
+                                if msg_link_col_idx != -1:
+                                    worksheet.write_url(row_num + 1, msg_link_col_idx, row_data['Message Link'], url_format, 'View Message')
                         
-                        with st.expander("💡 How to open CSV file properly"):
-                            st.info("**To avoid character encoding issues:**")
-                            st.write("1. **Excel**: Use 'Data' → 'From Text/CSV' → Select UTF-8 encoding")
-                            st.write("2. **Google Sheets**: Upload file → Select 'UTF-8' encoding")
-                            st.warning("❌ **Don't**: Double-click the CSV file (may cause issues)")
+                        excel_data = output.getvalue()
+                        st.download_button("📥 Download Excel File", excel_data, excel_filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
+                    else:
+                        csv_filename = f"telegram_scrape_{group.title.replace(' ', '_')}.csv"
+                        csv_data = df.to_csv(index=False)
+                        st.download_button("📥 Download CSV File", csv_data, csv_filename, "text/csv", type="primary")
                 else:
                     st.warning("⚠️ No messages found matching the specified criteria.")
-                    st.info("💡 Try different keywords, increase the message limit, or disable case-sensitive search.")
+                    st.info("💡 Try: Different keywords, removing exclude keywords, increasing message limit, or disabling case sensitive search.")
+                    
             except Exception as e:
-                st.error(f"❌ An error occurred: {str(e)}")
+                st.error(f"❌ Error occurred: {str(e)}")
                 if "Could not find the input entity" in str(e):
                     st.error("🔗 Invalid group link. Please check the link and try again.")
                 elif "FLOOD_WAIT" in str(e):
@@ -276,6 +283,8 @@ if st.button("🚀 Start Scraping", type="primary"):
 st.markdown("---")
 st.markdown("💡 **Tips:**")
 st.markdown("• Use public group links or invite links.")
-st.markdown("• For Hebrew text, copy keywords directly from Telegram for best results.")
-st.markdown("• If a scan stops early, it may be due to API limits. Try a smaller message limit.")
+st.markdown("• Separate multiple keywords with commas.")
+st.markdown("• Higher message limits take longer to process.")
+st.markdown("• For Hebrew text: Copy keywords directly from Telegram messages.")
+st.markdown("• If scan stops early, try smaller message limits (5K-10K).")
 
