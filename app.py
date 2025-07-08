@@ -178,9 +178,20 @@ if st.button("🚀 Start Scraping", type="primary"):
                                 if user_id not in user_latest_message or msg.date > user_latest_message[user_id]['date']:
                                     user_latest_message[user_id] = {'data': message_data, 'date': msg.date, 'user_id': user_id}
                 
-                except Exception as scan_error:
-                    st.warning(f"⚠️ Scan stopped at {message_count:,} messages: {str(scan_error)}")
-                    st.info("💡 This might be due to rate limiting, limited message access, or group permissions.")
+                except Exception as e:
+                    error_message = str(e)
+                    st.error(f"❌ An error occurred: {error_message}")
+                    
+                    if "Could not find the input entity" in error_message:
+                        st.error("🔗 This seems to be an invalid group/channel link.")
+                        st.info("💡 Please check the link and ensure you are a member of the group/channel if it's private.")
+                    elif "No user has" in error_message and "as username" in error_message:
+                        st.error(f"👤 The username `{group_link}` does not seem to exist or has been changed.")
+                        st.info("💡 Please double-check the username. If it's correct, the channel may have become private or been deleted.")
+                    elif "FLOOD_WAIT" in error_message:
+                        st.error("⏱️ Rate limited by Telegram. Please wait a few minutes before trying again.")
+                    else:
+                        st.info("💡 An unexpected error occurred. This could be due to a temporary network issue or an invalid link.")
 
                 await client.disconnect()
                 progress_bar.progress(1.0)
@@ -219,9 +230,13 @@ if st.button("🚀 Start Scraping", type="primary"):
                         match_rate = (len(df) / message_count * 100) if message_count > 0 else 0
                         st.metric("📈 Match Rate", f"{match_rate:.2f}%")
                     
+                    # Display results with clickable usernames
                     st.subheader("📋 Results")
+                    
+                    # First display the normal dataframe with message links
                     display_df = df.copy()
                     
+                    # Show dataframe with message links
                     column_config = {
                         "Username": st.column_config.TextColumn("Username"),
                         "Message Link": st.column_config.LinkColumn("Message Link", display_text="View Message"),
@@ -235,7 +250,34 @@ if st.button("🚀 Start Scraping", type="primary"):
                     
                     st.dataframe(display_df, use_container_width=True, height=400, column_config=column_config)
                     
-                    st.info("💡 Click on the 'View Message' links to open messages in Telegram.")
+                    # Now create a section with clickable username links
+                    st.subheader("👤 Clickable Usernames")
+                    st.info("💡 Click on any username below to open the Telegram profile:")
+                    
+                    # Create columns for username links in rows of 4
+                    usernames = display_df['Username'].unique()
+                    
+                    # Create rows of 4 columns each
+                    for i in range(0, len(usernames), 4):
+                        cols = st.columns(4)
+                        for j in range(4):
+                            if i+j < len(usernames):
+                                username = usernames[i+j]
+                                if username.startswith('@') and not username.startswith('@ID_'):
+                                    # Regular username format: @username
+                                    user_url = f"https://t.me/{username[1:]}"
+                                elif username.startswith('@ID_'):
+                                    # ID format: @ID_123456789
+                                    user_id = username[4:]  # Extract ID after '@ID_'
+                                    user_url = f"https://t.me/c/{user_id}"
+                                else:
+                                    # Any other format
+                                    clean_username = username.replace('@', '')
+                                    user_url = f"https://t.me/{clean_username}"
+                                
+                                cols[j].markdown(f"[{username}]({user_url})")
+                    
+                    st.info("💡 Click on the 'View Message' links in the table above to open specific messages in Telegram.")
                     
                     st.subheader("📥 Download Results")
                     
@@ -254,9 +296,24 @@ if st.button("🚀 Start Scraping", type="primary"):
                                 username_col_idx, msg_link_col_idx = -1, -1
 
                             for row_num, row_data in df.iterrows():
-                                if username_col_idx != -1 and row_data['Username'].startswith('@') and not row_data['Username'].startswith('@ID_'):
-                                    user_url = f"https://t.me/{row_data['Username'][1:]}"
-                                    worksheet.write_url(row_num + 1, username_col_idx, user_url, url_format, row_data['Username'])
+                                if username_col_idx != -1:
+                                    username = row_data['Username']
+                                    # Handle different username formats
+                                    if username.startswith('@') and not username.startswith('@ID_'):
+                                        # Regular username format: @username
+                                        user_url = f"https://t.me/{username[1:]}"
+                                        worksheet.write_url(row_num + 1, username_col_idx, user_url, url_format, username)
+                                    elif username.startswith('@ID_'):
+                                        # ID format: @ID_123456789
+                                        user_id = username[4:]  # Extract ID after '@ID_'
+                                        user_url = f"https://t.me/c/{user_id}"
+                                        worksheet.write_url(row_num + 1, username_col_idx, user_url, url_format, username)
+                                    else:
+                                        # Any other format, try to make it clickable if possible
+                                        clean_username = username.replace('@', '')
+                                        user_url = f"https://t.me/{clean_username}"
+                                        worksheet.write_url(row_num + 1, username_col_idx, user_url, url_format, username)
+                                
                                 if msg_link_col_idx != -1:
                                     worksheet.write_url(row_num + 1, msg_link_col_idx, row_data['Message Link'], url_format, 'View Message')
                         
